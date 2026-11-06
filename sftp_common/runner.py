@@ -91,12 +91,6 @@ def run_process(cfg: dict, target_date: datetime, perform_cleanup: bool,
             log.info("跳过数据库清理 (非默认模式)")
             log.info("跳过本地文件清理 (非默认模式)")
         return stat
-    elif no_download and not file_exists:
-        log.error(f"离线模式且本地文件不存在，无事可做: {remote_filename}")
-        stat['failed'] = True
-        if perform_cleanup:
-            _do_cleanup(cfg, table_name_list)
-        return stat
 
     ssh = sftp = None
     try:
@@ -107,6 +101,13 @@ def run_process(cfg: dict, target_date: datetime, perform_cleanup: bool,
 
         # 连接成功后（或离线模式下直接）先确保库结构存在：即使远程文件不存在，空库结构也完整
         _ensure_schema(cfg, table_name_list)
+        if no_download and not file_exists:
+            # 离线且无本地文件：库结构已建好，直接清理退出（原来会走到 parser 才报错）
+            log.error(f"离线模式且本地文件不存在，无事可做: {remote_filename}")
+            stat['failed'] = True
+            if perform_cleanup:
+                _do_cleanup(cfg, table_name_list)
+            return stat
 
         if not no_download:
             ok = sftp_client.download_file(sftp, remote_path, local_path, cfg)
@@ -157,10 +158,6 @@ def _ensure_schema(cfg: dict, table_name_list):
     conn = open_db(cfg['DB_PATH'], cfg)
     try:
         init_schema(conn, cfg, table_name_list)
-        # 业务钩子: map 模式补建老单表 data_F09554/55/56, 否则写入落不进查询表
-        if cfg.get('router') == 'map':
-            from sftp_jobs.table_router import ensure_legacy_tables
-            ensure_legacy_tables(conn, cfg)
     finally:
         try:
             conn.close()
