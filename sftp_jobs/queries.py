@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
-import os
 import sqlite3
 import threading
 import zlib
 
+from sftp_common.sftp_log import log
 from .config import JOBS, job_of_product
 from .runtime_paths import db_path, db_file_of
-from sftp_common.sftp_log import log
 
 _local = threading.local()
 _col_cache: dict = {}
@@ -60,7 +59,7 @@ async def get_latest_record(job_id: str, telnum, product_id=None) -> dict:
     try:
         conn = _conn(job_id, path, timeout_ms)
         cols = _columns_of(conn, t_name, f'{job_id}:{path}')
-        if not cols:                                   # 表还没建（当天文件未到）
+        if not cols:  # 表还没建（当天文件未到）
             return {}
         sql = f"SELECT * FROM {t_name} WHERE product_no = ?"
         args = [telnum]

@@ -30,11 +30,8 @@ def build_table_name_list(cfg: dict) -> List[str]:
         if not TABLE_NAME_RE.match(name):
             raise ValueError(f"非法表名: {name}")
         names.append(name)
-    try:
-        from sftp_jobs.table_router import table_names as _extend
-    except ImportError:
-        return names
-    return _extend(cfg, lambda c: names)
+
+    return names
 
 
 

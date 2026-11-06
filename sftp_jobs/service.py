@@ -16,7 +16,6 @@ import logging
 
 from sftp_common.config import DEFAULT_CONFIG
 from sftp_common.parsers import F09591Parser
-
 from .config import JOBS
 from .legacy_parser import LegacyLineParser
 from .product_injector import ProductIdInjector
@@ -50,7 +49,7 @@ def build_job_config(job_id: str) -> dict:
     prefixes = cfg['prefixes']
     if len(prefixes) != 1:
         raise ValueError(f"一个业务只能对应一个文件前缀，当前: {prefixes}")
-    cfg['FILE_PREFIXES'] = prefixes[0]          # 单文件下载 / 日志命名用主前缀
+    cfg['FILE_PREFIXES'] = prefixes[0]  # 单文件下载 / 日志命名用主前缀
     cfg['TABLE_NAME_PREFIX'] = cfg['table_prefix']
     cfg['DB_SCHEMA'] = [tuple(c) for c in cfg['schema']]
     cfg['PRIMARY_KEY'] = tuple(cfg['primary_key']) if cfg.get('primary_key') else None

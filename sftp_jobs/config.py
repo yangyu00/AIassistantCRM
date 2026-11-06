@@ -51,7 +51,7 @@ _CARD_SCHEMA = [
     ('reason_note', 'TEXT'),
     ('refer_strategy', 'TEXT'),
     ('city_id', 'INTEGER'),
-    ('product_id', 'TEXT'),      # 新增：写入时由配置填入，查询时二次校验，避免跨产品串记录
+    ('product_id', 'TEXT'),  # 新增：写入时由配置填入，查询时二次校验，避免跨产品串记录
 ]
 
 
@@ -75,9 +75,9 @@ def _card_job(prefix: str, product_id: str) -> dict:
     }
 
 
-F09554_CONFIG = _card_job('F09554', '202608041615335173')   # 号卡
-F09555_CONFIG = _card_job('F09555', '202608041615335172')   # 套餐
-F09556_CONFIG = _card_job('F09556', '202608041615335174')   # 宽带
+F09554_CONFIG = _card_job('F09554', '202608041615335173')  # 号卡
+F09555_CONFIG = _card_job('F09555', '202608041615335172')  # 套餐
+F09556_CONFIG = _card_job('F09556', '202608041615335174')  # 宽带
 
 F09591_CONFIG = {
     'prefixes': ['F09591'],
