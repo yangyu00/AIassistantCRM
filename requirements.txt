@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+aiohttp
+pyyaml
+paramiko
+openpyxl
+loguru
+pydantic
