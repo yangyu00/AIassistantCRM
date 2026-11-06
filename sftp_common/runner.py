@@ -39,6 +39,8 @@ def parse_args():
     parser.add_argument('--no-download', action='store_true',
                         help='不连 SFTP，只入库已存在的本地文件并清理（调试/补跑用）')
     parser.add_argument('--no-cleanup', action='store_true', help='不执行过期清理')
+    parser.add_argument('--cleanup', action='store_true', default=None,
+                        help='强制执行过期清理（覆盖「补历史默认不清理」）')
     return parser.parse_args()
 
 
@@ -47,6 +49,9 @@ def resolve_run_args(args, cfg: dict):
     清理口径：不传 --date（跑当天）默认执行清理；传了 --date（补历史）默认不清理，
     避免误删；两者都可用 --no-cleanup 显式关闭。
     """
+    # 口径：不传 --date（跑当天）→ 默认清理；传了 --date（补历史）→ 默认不清理，
+    # 避免拿历史日期去删数据；两者都可以用 --no-cleanup / --cleanup 显式覆盖
+    perform_cleanup = (not args.no_cleanup) if args.cleanup is None else bool(args.cleanup)
     if args.date:
         try:
             target_date = (datetime.strptime(args.date, '%Y-%m-%d') if '-' in args.date
@@ -54,10 +59,10 @@ def resolve_run_args(args, cfg: dict):
         except ValueError:
             log.error(f"日期格式错误，请使用 YYYYMMDD 格式: {args.date}")
             sys.exit(1)
-        perform_cleanup = not args.no_cleanup
+        if args.cleanup is None:
+            perform_cleanup = False
     else:
         target_date = datetime.now()
-        perform_cleanup = not args.no_cleanup
     return target_date, perform_cleanup, args.no_download
 
 
@@ -91,6 +96,7 @@ def run_process(cfg: dict, target_date: datetime, perform_cleanup: bool,
             log.info("跳过数据库清理 (非默认模式)")
             log.info("跳过本地文件清理 (非默认模式)")
         return stat
+
 
     ssh = sftp = None
     try:
@@ -136,6 +142,8 @@ def run_process(cfg: dict, target_date: datetime, perform_cleanup: bool,
             cleanup_expired_data(cfg, table_name_list)
         elif not stat['failed']:
             log.info("跳过数据库清理 (非默认模式)")
+        else:
+            log.info("入库失败，本次跳过数据库清理，保留数据以便排查")
         if stat.get('download_failed'):
             log.warning("===== 本次未取到当天文件，请检查远程文件是否已生成 / 网络是否可用 =====")
 

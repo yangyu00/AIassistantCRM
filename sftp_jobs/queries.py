@@ -1,11 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-只读查询：一个 job 一个库，按 product_no 的 crc32 定位分表，与写入路由完全一致。
-连接按 (job_id, 线程) 缓存复用，不再每次查询新建连接。
-
-注意：拆分后不再读老单表 data_F09554/55/56（无 product_id 列、且已停止写入）。
-老库如需回填，用 scripts/migrate_card_shards.py 一次性导入分表。
-"""
 import os
 import sqlite3
 import threading

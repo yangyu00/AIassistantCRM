@@ -1,11 +1,15 @@
 from services.product_info_raw import ProductInfoRaw
+from src.security import html_text
 
 
 class ProductInfoRewrite(ProductInfoRaw):
     def __init__(self, product_id, custom_label_info, record=None):
         super().__init__(product_id, custom_label_info)
-        self.record = record
-        self.product_name = self.__get_product_name()
+        # 未注册的产品ID（原实现返回 None）不能静默变成 None.name 崩溃，给个可读默认值
+        if self.product_name is None:
+            self.product_name = "未知产品"
+        self.record = record if isinstance(record, dict) else None
+        self.product_name = self.__get_product_name() or self.product_name
         self.output_script = self.__get_output_script()
 
     def __get_product_name(self):
@@ -21,16 +25,17 @@ class ProductInfoRewrite(ProductInfoRaw):
     def __get_output_script(self):
         # 从独立数据库查询模块获取最近一条记录
         output_script = ''
+        if not isinstance(self.record, dict):
+            self.record = None
         if self.record:
-            output_script += '<strong>【通话总结】</strong>' + (self.record.get('content_abstract') or '无') + '\n'
-            output_script += '<strong>【用户需求】</strong>' + f'<strong><span style="color:blue;">{self.record.get("type_xl")}：</span></strong>' + (
-                    self.record.get('cust_demand') or '无') + '\n'
-            output_script += '<strong>【已推荐政策】</strong>' + (self.record.get('rec_strategy') or '无') + '\n'
-            output_script += '<strong>【拒绝原因】</strong>' + '\n' + '<strong><span style="color:blue;">拒绝原因：</span></strong>' + (
-                    self.record.get(
-                        'reject_reason') or '无'
-            ) + '\n' + '<strong><span style="color:blue;">具体表述：</span></strong>' + (
-                                     self.record.get('reason_note') or '无') + '\n'
+            # 库表内容统一转义后再包标签
+            g = lambda k: html_text(self.record.get(k) or '无')
+            output_script += '<strong>【通话总结】</strong>' + g('content_abstract') + '\n'
+            output_script += '<strong>【用户需求】</strong>' + '<strong><span style="color:blue;">' + g('type_xl') + '：</span></strong>' + g('cust_demand') + '\n'
+            output_script += '<strong>【已推荐政策】</strong>' + g('rec_strategy') + '\n'
+            output_script += ('<strong>【拒绝原因】</strong>\n'
+                              + '<strong><span style="color:blue;">拒绝原因：</span></strong>' + g('reject_reason') + '\n'
+                              + '<strong><span style="color:blue;">具体表述：</span></strong>' + g('reason_note') + '\n')
 
         output_script += (self.auxiliary_portrait + '\n') if self.auxiliary_portrait else ""
 

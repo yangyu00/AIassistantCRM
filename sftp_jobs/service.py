@@ -68,10 +68,17 @@ def build_job_config(job_id: str) -> dict:
     cls = _PARSERS.get(kind)
     if cls is None:
         raise ValueError(f"未知 parser 类型: {kind}")
+    if kind == 'line':
+        # 未显式配置时，沿用 sftp_common 默认：续行拼回 strategy_name
+        cfg.setdefault('CONTINUATION_COLUMN', DEFAULT_CONFIG.get('CONTINUATION_COLUMN'))
+        cfg.setdefault('REQUIRED_COLUMNS', DEFAULT_CONFIG.get('REQUIRED_COLUMNS', ()))
     if kind == 'wide':
         cfg['HEADER_COLUMNS'] = int(cfg.get('wide_header_cols', 3))
         cfg['PAIR_COLUMNS'] = tuple(cfg.get('wide_pair_cols', ('product_id', 'strategy_script')))
-    cfg['_parser_factory'] = lambda c, names, _cls=cls: _cls(c, names)
+        if cfg.get('continuation_col'):
+            cfg['CONTINUATION_COLUMN'] = cfg['continuation_col']
+    # 解析器统一由 sftp_common.parsers.get_parser 按 FILE_PREFIXES 选择，
+    # 不再注入 _parser_factory（原注入的 WidePairParser 未在 parsers 中注册，必然 AttributeError）
 
     # ---- product_id 注入：配置了 product_id 的业务，入库时自动补列 ----
     if cfg.get('product_id') and cfg.get('product_id_column'):

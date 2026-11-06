@@ -6,7 +6,6 @@
 - 标签查询 2s 超时，失败/超时降级为空标签，不拖垮整个接口。
 """
 import asyncio
-import datetime
 import time
 
 import aiohttp
@@ -99,6 +98,7 @@ async def get_custom_info(tel: str) -> dict:
         "TELNUM": tel,
         "TYPE": str(global_config['IOP']['CustInfo']['type']),
     }
+    status, res = None, None
     async with _gate:
         try:
             async with _session.post(url, json=post_data, headers=CUSTINFO_HEADERS,
@@ -119,12 +119,14 @@ async def get_custom_info(tel: str) -> dict:
     if status != 200:
         my_log.error(f"标签查询 HTTP {status}: {mask_sensitive(tel)}")
         return {}
-    if res.get("res_code") != "0":
+    if not isinstance(res, dict) or res.get("res_code") != "0":
         my_log.error(f"标签查询 res_code={res.get('res_code')}, res_msg={res.get('res_msg')}")
         return {}
 
     result = res.get("result") or {}
     labels = {}
     for item in result.get("BUSIINFO") or []:
-        labels[item["ITEMCODE"]] = [item.get("ITEMNAME"), item.get("ITEMVALUE")]
+        if not isinstance(item, dict) or "ITEMCODE" not in item:
+            continue
+        labels[str(item["ITEMCODE"])] = [item.get("ITEMNAME"), item.get("ITEMVALUE")]
     return labels

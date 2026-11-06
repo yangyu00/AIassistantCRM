@@ -34,11 +34,13 @@ class AvlParser(ABC):
         """新记录首行 → 返回记录缓冲（list），返回 None 表示这条丢弃"""
 
     def append_continuation(self, buf: list, line: str, batches=None):
-        """续行处理，默认拼到配置的那一列并还原换行符"""
+        """续行处理，默认拼到配置的那一列并还原换行符。
+        注意：拼接的是「原始物理行文本」（制表符原样保留），
+        这样 F09591 尾列里原本用 Tab 分隔的多段内容不会被压成一个字段。"""
         col = self.cfg.get('CONTINUATION_COLUMN')
         if col is not None and batches is not None:
             idx = batches.column_index(col)
-            buf[idx] = buf[idx] + '\n' + line
+            buf[idx] = (buf[idx] or '') + '\n' + line
 
     @abstractmethod
     def finish_record(self, buf: list, batches: TableBatcher):
@@ -64,6 +66,11 @@ class AvlParser(ABC):
             conn.commit()
 
             batches = TableBatcher(self.cfg, self.table_name_list, conn)
+            # 业务层可选挂钩（如 product_id 自动补列）；原来只在 cfg 里放了
+            # _wrap_batcher，从来没人调用，导致 product_id 列一直是空
+            wrapper = self.cfg.get('_wrap_batcher')
+            if wrapper is not None:
+                batches = wrapper(batches)
             log.info(f"开始解析文件: {fname}")
             reader = AvlLineReader(avl_path)
 

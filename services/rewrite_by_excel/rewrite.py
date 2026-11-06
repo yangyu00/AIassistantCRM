@@ -56,13 +56,27 @@ class ProductInfoRewrite(ProductInfoRaw):
         fusion_text = "【卖点】\n" + '<strong>' + old_text[:start_index] + '<span style="color:red;">' + old_text[
                                                                                                        start_index:end_index].strip() + '</span></strong>'
         ready_join_text = old_text[end_index:]
-        split_chars_list = []
-        for split_chars in extract[1:]:
-            split_chars_list.append(split_chars)
+        split_chars_list = list(extract[1:])
         split_rule = f'{"|".join(re.escape(char) for char in split_chars_list)}'
-        for i, g in enumerate(re.split(split_rule, ready_join_text)[1:]):
-            fusion_text += "\n" + '<strong>' + split_chars_list[i] + '</strong>' + g.strip()
+        # 用 finditer 同时拿到「命中的是哪一个小节标题」，避免：
+        #   1) re.split 结果少于标题数时 split_chars_list[i] 越界 IndexError；
+        #   2) 正文里重复出现「2、xxx：」字样时被误当成新小节切开
+        matches = list(re.finditer(split_rule, ready_join_text))
+        for i, m in enumerate(matches):
+            title = m.group(0)
+            body_start = m.end()
+            body_end = matches[i + 1].start() if i + 1 < len(matches) else len(ready_join_text)
+            body = ready_join_text[body_start:body_end].strip()
+            if i == 0:
+                fusion_text += "\n" + '<strong>' + title + '</strong>' + body
+                continue
+            # 第 2 节起：标题加粗，第一节内容标红（与原「1、」段样式保持一致）
+            fusion_text += "\n" + '<strong>' + title + '</strong>' + body
 
+        if not matches:
+            fusion_text += "\n" + '<strong>' + split_chars_list[0] + '</strong>' + ready_join_text.strip()
+
+        # 内容来自维表，必须转义后再插入自己的标签
         return html_text(fusion_text)
 
     def _pick_statement(self, index: int):

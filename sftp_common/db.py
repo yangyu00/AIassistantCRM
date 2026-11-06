@@ -209,7 +209,17 @@ class TableBatcher:
         if not batch:
             return 0
         expected = len(batch)
-        written = retry_on_lock(self._do_flush, t_name, batch, conn=self._conn, _retries=int(self._cfg['DB_RETRY_TIMES']), _backoff_base=float(self._cfg['DB_RETRY_BACKOFF_BASE']))
+        try:
+            written = retry_on_lock(self._do_flush, t_name, batch, conn=self._conn, _retries=int(self._cfg['DB_RETRY_TIMES']), _backoff_base=float(self._cfg['DB_RETRY_BACKOFF_BASE']))
+        except Exception:
+            # 自动提交模式下 _do_flush 手动 BEGIN IMMEDIATE，中途失败必须回滚，
+            # 否则连接里残留打开的事务，下一批会报
+            # "cannot start a transaction within a transaction"
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            raise
         return written if written == expected else expected - len(batch)
 
     def flush_if_full(self, t_name: str) -> int:

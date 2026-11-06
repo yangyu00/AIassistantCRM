@@ -1,6 +1,7 @@
 import re
 
 from services.product_info_raw import ProductInfoRaw
+from src.security import html_text
 
 
 class ProductInfoRewrite(ProductInfoRaw):
@@ -86,8 +87,8 @@ class ProductInfoRewrite(ProductInfoRaw):
         if not raw_content:
             return "无历史话术记录"
 
-        # 2. 调用解析函数，转换所有自定义标签
-        html_content = self.__parse_custom_tags(raw_content)
+        # 2. 先转义 < > &，只放行我们自己识别的自定义标签，避免外部内容注入 HTML
+        html_content = self.__parse_custom_tags(html_text(raw_content))
 
         return html_content
 

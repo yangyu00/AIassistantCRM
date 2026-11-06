@@ -1,5 +1,7 @@
 import re
+
 from services.product_info_raw import ProductInfoRaw
+from src.security import html_text
 
 
 class ProductInfoRewrite(ProductInfoRaw):
@@ -13,7 +15,10 @@ class ProductInfoRewrite(ProductInfoRaw):
         """
         解析 self.record['strategy_script'] 并生成格式化的话术脚本。
         """
-        raw_content = self.record.get('strategy_script', '')
+        if not isinstance(self.record, dict):
+            # 业务库没查到记录时 main.py 仍会构造本对象，这里不能抛 AttributeError
+            return "无话术记录"
+        raw_content = self.record.get('strategy_script', '') or ''
         if not raw_content:
             return "无话术记录"
 
@@ -41,18 +46,21 @@ class ProductInfoRewrite(ProductInfoRaw):
 
                 # 确保提取出来的标题是有效的
                 if title:
+                    # 外部内容先转义，再插入自己的样式标签，避免 < > & 撑坏 HTML
+                    safe_title = html_text(title)
+                    safe_content = html_text(content)
                     # 3. 核心样式逻辑
                     # 标题统一先设为蓝色加粗
-                    formatted_title = f'<strong><span style="color:blue;">{title}：</span></strong>'
+                    formatted_title = f'<strong><span style="color:blue;">{safe_title}：</span></strong>'
 
                     # 动态判断当前标题是否为“资费摘要”
                     if title == "资费摘要":
                         # 如果是，标题和内容都标红加粗
-                        formatted_title = f'<strong><span style="color:red;">{title}：</span></strong>'
-                        formatted_content = f'<strong><span style="color:red;">{content}</span></strong>'
+                        formatted_title = f'<strong><span style="color:red;">{safe_title}：</span></strong>'
+                        formatted_content = f'<strong><span style="color:red;">{safe_content}</span></strong>'
                     else:
                         # 其他标签内容保持普通文本
-                        formatted_content = content
+                        formatted_content = safe_content
 
                     # 4. 拼装并拼接
                     html_content += f"{formatted_title} {formatted_content}\n"

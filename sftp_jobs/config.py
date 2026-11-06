@@ -2,14 +2,6 @@
 """
 业务注册表：一个业务 = 一条配置 = 一个独立的 SQLite 库。
 
-【2026-11 改造】号卡 / 套餐 / 宽带原为 F09554 一个 job 内的 3 张老单表
-（router='map' + product_table_map + router_patch），现拆成 3 个独立 job：
-    F09554 → runtime/F09554/sqlite_db/data_F09554.db  号卡  ...173
-    F09555 → runtime/F09555/sqlite_db/data_F09555.db  套餐  ...172
-    F09556 → runtime/F09556/sqlite_db/data_F09556.db  宽带  ...174
-每个库内部仍按 product_no 的 crc32 分 128 张表（data_XXXX_0..127），
-写入与查询路由完全一致，不再有"只写分表、只读单表"的空转。
-
 字段说明（前 8 项为必填，其余有默认值）：
   prefixes         该业务的 AVL 文件名前缀（单元素列表，与主前缀一致）
   table_prefix     分表名前缀，最终表名为 {table_prefix}_{0..N-1}
@@ -79,7 +71,6 @@ def _card_job(prefix: str, product_id: str) -> dict:
         'product_id_column': 'product_id',
         'int_columns': ('city_id',),
         'int_default': 0,
-        # 与老服务一致：每 10000 条提交一次
         'batch_size': 10000,
     }
 
@@ -121,7 +112,9 @@ F09609_CONFIG = {
     ],
     'primary_key': ('product_no', 'product_id'),
     'index_columns': ('op_time',),
-    'expire_days': (2, 2),
+    # 原为 (2, 2)：文件晚到/周末不出文件时，按 op_time < 今天-2 天会被清掉，
+    # 查询侧拿到「无话术记录」。放宽到 7 天，兼顾兜底话术可用性
+    'expire_days': (7, 7),
     'parser': 'wide',
     'router': 'crc32',
     'wide_header_cols': 3,

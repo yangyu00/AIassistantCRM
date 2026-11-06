@@ -11,10 +11,6 @@ def main():
         return 2
     job_id = sys.argv[1].upper()
     cfg = build_job_config(job_id)
-    # 安装 map 路由: F09554 按 product_id 写入老单表, 与查询口径一致
-    from .router_patch import install
-    install()
-    # runner.main 内部读 sys.argv，这里把 job_id 摘掉，保留后面的参数
     sys.argv = [sys.argv[0]] + sys.argv[2:]
     from sftp_common.runner import main as run_main
     run_main(cfg)

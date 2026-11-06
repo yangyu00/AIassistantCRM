@@ -1,7 +1,6 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import List
 
 import uvicorn
@@ -18,7 +17,6 @@ from sftp_jobs import start_all
 from sftp_jobs.queries import get_latest_record
 
 from src import dim_table
-from src.call_stat import record_call
 from src.exceptions import telnumError, productIdError, register_errors_handlers
 from src.log_util import my_log
 
@@ -191,11 +189,10 @@ async def marketAssistant(args: Args):
         if job_id is not None:
             # 业务库中的产品：号卡/套餐/宽带/控损/客户诊断，库路由见 services/product_registry.py
             record = await get_latest_record(job_id, args.telnum, one_product_obj.id)
-            if record:
-                product_obj_list.append(spec_cls(one_product_obj.id, custom_label_info, record))
-                continue
+            product_obj_list.append(spec_cls(one_product_obj.id, custom_label_info, record))
+            continue
 
-        # 业务库没命中 → 查卖点维表（走 dim_table 快照，热更新后即时生效）
+        # 未进入任何业务库（resolve 返回 None）→ 查卖点维表（走 dim_table 快照，热更新后即时生效）
         if dim_table.has_selling_point(one_product_obj.id):
             product_obj_list.append(ProductInfoByExcel(one_product_obj.id, custom_label_info))
             continue

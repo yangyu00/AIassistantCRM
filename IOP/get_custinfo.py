@@ -1,11 +1,19 @@
+import datetime
+
+import aiohttp
+
+from IOP.get_token import TOKENS, token2global
+from IOP.iop_client import get_custom_info, startup
 from config import config
 from src.log_util import my_log
-from IOP.get_token import TOKENS, token2global
-import aiohttp
-import datetime
 
 
 async def get_custom_info_in_global(tel):
+    await startup()
+    return await get_custom_info(tel)
+
+
+async def _legacy_get_custom_info_in_global(tel):
     if TOKENS.access_token is None or datetime.datetime.now() > TOKENS.deadline:
         await token2global()
         for _ in range(3):

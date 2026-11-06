@@ -40,6 +40,7 @@ class ProductInfoRaw(object):
     def __get_auxiliary_portrait(self):
         portrait_str = ""
         exist_label_name_list = []
+        exist_ids = set()
         for i, label_nv in enumerate(self.queried_label_nvs):
             if label_nv is None:
                 continue
@@ -73,13 +74,17 @@ class ProductInfoRaw(object):
             if self.queried_label_ids[i] == "1c7b8fdc55e00c4300adcf1c0543f00f":
                 label_value = ("是" if str(label_value) == "1" else "否")
 
-            # 涉及是否的重复标签去重
-            if label_name in exist_label_name_list:
+            # 涉及是否的重复标签去重：IOP 与维表对同名标签可能给出不同写法，
+            # 这里按「标签ID」判重，不再依赖中文展示名是否完全一致
+            if self.queried_label_ids[i] in exist_ids:
                 if label_value == "是":
-                    portrait_str.replace(f"{label_name}: 否; ", f"{label_name}: 是; ")
-                    continue
-                else:
-                    continue
+                    # 把先前写进去的同名标签由「否」升级为「是」（原 replace 结果没赋值，等于没生效）
+                    old = f'{html_text(label_name)}: <strong><span style="color:blue;">否</span></strong>; '
+                    new = f'{html_text(label_name)}: <strong><span style="color:blue;">是</span></strong>; '
+                    if old in portrait_str:
+                        portrait_str = portrait_str.replace(old, new, 1)
+                continue
+            exist_ids.add(self.queried_label_ids[i])
 
             # 降档阈值的特殊处理
             if self.queried_label_ids[i] in ("0e6f7d4a8b32aa551d09174481857c39", "efe5295c6763e2eab16afbaa984a9ee4"):
