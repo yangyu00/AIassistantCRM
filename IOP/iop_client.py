@@ -7,6 +7,7 @@
 """
 import asyncio
 import time
+from typing import Tuple, Any
 
 import aiohttp
 
@@ -26,8 +27,8 @@ TOKEN_TIMEOUT = aiohttp.ClientTimeout(total=3)
 CUSTINFO_HEADERS = {'Content-Type': 'application/json; charset=gbk',
                     'Accept-Encoding': 'gzip, deflate'}
 
-_session: aiohttp.ClientSession = None
-_gate: asyncio.Semaphore = None
+_session: aiohttp.ClientSession | None = None
+_gate: asyncio.Semaphore | None = None
 
 # token 缓存
 _token_value = None
@@ -50,7 +51,7 @@ async def shutdown():
         _session = None
 
 
-async def _fetch_token() -> str:
+async def _fetch_token() -> tuple[Any, int] | tuple[None, int]:
     data = {
         'grant_type': 'client_credentials',
         'client_id': global_config['IOP']['TOKEN']['id'],
@@ -64,7 +65,7 @@ async def _fetch_token() -> str:
     return None, 0
 
 
-async def _get_token() -> str:
+async def _get_token() -> Any | None:
     global _token_value, _token_deadline
     now = time.monotonic()
     if _token_value and now < _token_deadline:
