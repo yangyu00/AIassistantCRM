@@ -1,8 +1,6 @@
-import datetime
-import importlib
+import asyncio
 import os
-import subprocess
-import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List
 
@@ -19,71 +17,129 @@ from services.product_registry import resolve as resolve_product_spec
 from sftp_jobs import start_all
 from sftp_jobs.queries import get_latest_record
 
-from src import consts
+from src import dim_table
 from src.call_stat import record_call
 from src.exceptions import telnumError, productIdError, register_errors_handlers
 from src.log_util import my_log
-from src.task_scheduler import repeat_task
 
-app = FastAPI()
+excel_mtimes: dict = {}
+sftp_threads: list = []
+refresh_task = None
+
+
+def _mtime(name: str):
+    p = dim_table.MAIN_PATH / 'excel2consts' / name
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return None
+
+
+async def _run_compiler(script: str) -> tuple:
+    """跑一个维表编译脚本。脚本只写自己的分片，不碰 src/consts.py。"""
+    path = dim_table.MAIN_PATH / script
+    proc = await asyncio.create_subprocess_exec(
+        os.sys.executable, str(path), cwd=str(dim_table.MAIN_PATH),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await proc.communicate()
+    text = (out.decode(errors='ignore') + err.decode(errors='ignore')).strip()
+    return script, proc.returncode == 0, text[:1000]
+
+
+async def _refresh_dim_tables(force: bool = False) -> dict:
+    """维表 Excel 有变化就重新编译，全部成功后合并落盘并热加载。
+
+    这是原实现的 bug 所在：卖点维表与标签转换维表都往 src/consts.py 写，
+    后跑的脚本先删再写，把先跑那个的字典整段冲掉（现象：只剩
+    label_name_mapping，product_selling_point_match_dict 消失，所有产品掉进
+    ProductInfoRaw，返回 code=2「无产品名称」）。现在各脚本只产出自己的分片，
+    全部编译成功再由 dim_table 合并成一份原子替换；任何一张失败都整体保留旧版。
+    """
+    now = {n: _mtime(n) for n in dim_table.DIM_TABLES}
+    missing = [n for n, m in now.items() if m is None]
+    if missing:
+        my_log.warning(f'维表文件缺失，本轮跳过: {missing}')
+
+    changed = [n for n, m in now.items() if m is not None and (force or m != excel_mtimes.get(n))]
+    if not changed:
+        return {'changed': [], **dim_table.stat()}
+
+    my_log.info(f'检测到维表变更: {changed}，开始编译')
+    results = await asyncio.gather(*(_run_compiler(dim_table.DIM_TABLES[n]) for n in changed))
+    for script, ok, text in results:
+        if not ok:
+            my_log.error(f'{script} 编译失败，本轮维表整体保持上一版本: {text}')
+            return {'changed': changed, 'error': f'{script} 编译失败', 'detail': text, **dim_table.stat()}
+        if text:
+            my_log.info(f'{script}: {text}')
+
+    ok, err = dim_table.merge_part_files()
+    if not ok:
+        my_log.error(f'维表合并未通过，继续使用上一版本: {err}')
+        return {'changed': changed, 'error': err, **dim_table.stat()}
+
+    # 落盘成功才记 mtime，失败下一轮自动重试
+    for n in changed:
+        excel_mtimes[n] = _mtime(n)
+    return {'changed': changed, **dim_table.stat()}
+
+
+async def _dim_table_loop():
+    """启动先与磁盘对齐一次，之后每 DIM_TABLE_CHECK_SECONDS 秒检查一次。"""
+    while True:
+        try:
+            await _refresh_dim_tables(force=True)
+        except Exception as exc:
+            my_log.error(f'维表刷新任务异常: {exc}')
+        try:
+            await asyncio.sleep(DIM_TABLE_CHECK_SECONDS)
+        except asyncio.CancelledError:
+            raise
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    global refresh_task, sftp_threads
+
+    # 1) 先加载磁盘上已有的维表，保证第一个请求进来时字典不是空的
+    dim_table.load_current()
+
+    # 2) 维表热更新循环：启动即把 Excel 编译结果与磁盘对齐一次
+    refresh_task = asyncio.create_task(_dim_table_loop(), name='dim-table-refresh')
+
+    # 3) IOP 共享连接池（原来藏在请求里的懒启动提到这里）
+    from IOP.iop_client import startup as iop_startup, shutdown as iop_shutdown
+    await iop_startup()
+
+    # 4) SFTP 入库子进程（保持原有"启动即拉起"的行为，线程句柄留着以便退出时收拢）
+    sftp_threads = start_all()
+
+    my_log.info(f'服务启动完成，维表: {dim_table.stat()}')
+    yield
+
+    # ---- shutdown ----
+    if refresh_task is not None:
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
+    for f in dim_table.MAIN_PATH.joinpath('src').glob(dim_table.PART_PREFIX + '*.py'):
+        f.unlink(missing_ok=True)  # 清理异常退出残留的分片，避免下次启动混入旧数据
+    for t in sftp_threads:
+        if t.is_alive():
+            my_log.info(f'等待 SFTP 子进程结束: {t.name}')
+            t.join(timeout=SFTP_STOP_TIMEOUT)
+    await iop_shutdown()
+    my_log.info('服务已停止')
+
+
+app = FastAPI(lifespan=lifespan)
 register_errors_handlers(app)
 global_config = ImmutableYamlConfig()
 
-
-@app.middleware("http")
-async def count_call_middleware(request, call_next):
-    """每次访问服务，当日调用量 +1（无论请求成功或失败都计数）。"""
-    try:
-        response = await call_next(request)
-    finally:
-        record_call()
-    return response
-
-
-excel_update_time = []
-first_launch = True
-
-MAIN_PATH = Path(__file__).resolve().parent
-
-
-@app.on_event('startup')
-@repeat_task(seconds=60 * 60)
-def repeat_update_consts() -> None:
-    # 任务1.定时检查卖点维表和标签转换维表是否更新，更新则重写src中的consts文件，并利用importlib.reload(consts)实现热更新
-    # 对应api中“维表中业务”
-    global excel_update_time, first_launch
-    heart_file = {
-        f'{str(MAIN_PATH)}/excel2consts/卖点维表.xlsx': f'{str(MAIN_PATH)}/excel2consts/product_selling_point_match.py',
-        f'{str(MAIN_PATH)}/excel2consts/标签转换维表.xlsx': f'{str(MAIN_PATH)}/excel2consts/labelName1_to_labelName2.py'
-    }
-
-    for i, (one_file_path, convert_script) in enumerate(heart_file.items()):
-        mtime = os.path.getmtime(one_file_path)  # 获取文件更新时间
-        mtime = datetime.datetime.fromtimestamp(mtime)  # 时间转为datetime格式
-
-        if len(excel_update_time) < len(heart_file):
-            excel_update_time.append(mtime)
-
-        if mtime != excel_update_time[i] or first_launch:
-            if len(excel_update_time) == len(heart_file):
-                first_launch = False
-            my_log.info(f'{os.path.basename(one_file_path)} 触发更新任务')
-            try:
-                if isinstance(convert_script, str):
-                    cmd_list = ['python', f'{convert_script}']
-                    subprocess.run(cmd_list, shell=False, capture_output=False, check=False)
-                elif isinstance(convert_script, list):
-                    for script in convert_script:
-                        cmd_list = ['python', f'{script}']
-                        subprocess.run(cmd_list, shell=False, capture_output=False, check=False)
-            except Exception as e:
-                my_log.error(f'UPDATE {os.path.basename(one_file_path)} ERROR')
-            else:
-                importlib.reload(consts)
-                excel_update_time[i] = mtime
-
-    # 任务2.定时异步运行 sftp_service 的任务函数
-    start_all()
+MAIN_PATH = dim_table.MAIN_PATH
+DIM_TABLE_CHECK_SECONDS = int(global_config.get('dim_table', {}).get('check_seconds', 300))
+SFTP_STOP_TIMEOUT = int(global_config.get('sftp', {}).get('stop_timeout', 30))
 
 
 class ProductIds(BaseModel):
@@ -139,8 +195,8 @@ async def marketAssistant(args: Args):
                 product_obj_list.append(spec_cls(one_product_obj.id, custom_label_info, record))
                 continue
 
-        # 如果上述 job_id 中未查到，则查询 consts.product_selling_point_match_dict
-        if one_product_obj.id in consts.product_selling_point_match_dict.keys():
+        # 业务库没命中 → 查卖点维表（走 dim_table 快照，热更新后即时生效）
+        if dim_table.has_selling_point(one_product_obj.id):
             product_obj_list.append(ProductInfoByExcel(one_product_obj.id, custom_label_info))
             continue
 
@@ -162,6 +218,23 @@ async def marketAssistant(args: Args):
 
     result = {"allScripts": allScripts}
     return {"res_code": 0, "res_desc": "", "result": result}
+
+
+@app.get("/api/dimTable/status")
+async def dim_table_status():
+    """维表自检：看当前生效版本、各表条目数、文件时间，排查"维表改了没生效"用。"""
+    return {"res_code": 0, "res_desc": "", "result": {
+        "dim_table": dim_table.stat(),
+        "files": dim_table.list_dim_tables(),
+        "refresh_seconds": DIM_TABLE_CHECK_SECONDS,
+    }}
+
+
+@app.post("/api/dimTable/reload")
+async def dim_table_reload():
+    """手动触发一次维表重新编译+加载，不必等定时任务或重启进程。"""
+    result = await _refresh_dim_tables(force=True)
+    return {"res_code": 0 if 'error' not in result else 1, "res_desc": "", "result": result}
 
 
 if __name__ == "__main__":

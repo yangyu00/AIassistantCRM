@@ -1,9 +1,28 @@
 import re
 
 from services.product_info_raw import ProductInfoRaw
-from src import consts
+from src import dim_table
+from src.security import html_text
 
 from src.log_util import my_log
+
+def _tag_priority(product_id, search_id):
+    """标签在该产品「标签ID」列里的行号 = 维表优先级，越靠前越优先。
+
+    维表是把标签ID直接当字典键的（不是"标签0/标签1"），而 Python dict 只保证
+    插入顺序，多标签同时命中时原来返回哪条完全取决于 Excel 列的读取顺序，
+    业务上不可解释。这里回到维表原文按行号定序：上面那行优先。
+    兜底话术恒为最大值，只在没有任何标签命中时使用。
+    """
+    if search_id == "兜底话术":
+        return float('inf')
+    _, _, label_ids = dim_table.selling_point(product_id)
+    if not label_ids:
+        return 0
+    candidates = [x.strip() for x in re.split(r'[\n,，;；\r]+', str(label_ids)) if x.strip()]
+    # 没在「标签ID」列里登记的命中项排到兜底话术之后：兜底仍优先于未登记标签，
+    # 但永远不会让 sorted 因为 key 类型不一致（int vs float）抛异常
+    return candidates.index(search_id) if search_id in candidates else len(candidates) + 1
 
 
 class ProductInfoRewrite(ProductInfoRaw):
@@ -15,10 +34,9 @@ class ProductInfoRewrite(ProductInfoRaw):
         self.output_script = self.__get_output_script()
 
     def __get_selling_point(self):
-        if self.product_id not in consts.product_selling_point_match_dict:
+        _, old_text, _ = dim_table.selling_point(self.product_id)
+        if not old_text:
             return ""
-
-        old_text = consts.product_selling_point_match_dict[self.product_id][1]
         # 将“1、资费：”后的字符标红，若“2、价格”未换行，增加换行符
         pattern = re.compile(r'\d、.*?：', re.DOTALL)
         extract = pattern.findall(old_text)
@@ -45,72 +63,53 @@ class ProductInfoRewrite(ProductInfoRaw):
         for i, g in enumerate(re.split(split_rule, ready_join_text)[1:]):
             fusion_text += "\n" + '<strong>' + split_chars_list[i] + '</strong>' + g.strip()
 
-        return fusion_text
+        return html_text(fusion_text)
+
+    def _pick_statement(self, index: int):
+        """切入话术 index=0 / 挽留话术 index=1。
+
+        修了两个问题：
+        1. 原实现写死 fusion_script_list[0] / [1]，维表某格只填了一条话术时
+           会 IndexError，被 except 吞掉后连兜底话术都拿不到；现在按长度取。
+        2. 多标签同时命中时不再依赖 dict 插入顺序，按维表行序取优先级最高的。
+        """
+        id_sequence_obj = dim_table.cut_in_entry(self.product_id)
+        if not isinstance(id_sequence_obj, dict) or not id_sequence_obj:
+            return ""
+
+        try:
+            ordered = sorted(id_sequence_obj.items(),
+                             key=lambda kv: _tag_priority(self.product_id, kv[0]))
+            for search_id, scripts in ordered:
+                if search_id == "兜底话术" or not isinstance(scripts, (list, tuple)):
+                    continue
+                label = self.custom_label_info.get(search_id)
+                if label is None or str(label[1]).strip() not in ("是", "1"):
+                    continue
+                if len(scripts) > index and scripts[index]:
+                    return str(scripts[index])
+        except Exception as e:
+            my_log.error(f'{"切入" if index == 0 else "挽留"}话术读取错误：{e}')
+
+        fallback = id_sequence_obj.get("兜底话术")
+        if isinstance(fallback, (list, tuple)) and len(fallback) > index and fallback[index]:
+            return str(fallback[index])
+        return ""
 
     def __get_cut_in_statement(self):
-        if (self.product_id not in consts.cut_in_script_dict.keys()
-                or not isinstance(consts.cut_in_script_dict[self.product_id], dict)
-                or not consts.cut_in_script_dict[self.product_id]):
-            return ""
-
-        id_sequence_obj = consts.cut_in_script_dict[self.product_id]
-
-        fallback_script = ""
-
-        try:
-            for search_id, fusion_script_list in id_sequence_obj.items():
-                if (search_id != "兜底话术"
-                        and search_id in self.custom_label_info.keys()
-                        and (self.custom_label_info[search_id][1] == "是" or self.custom_label_info[search_id][
-                            1] == "1")
-                        and fusion_script_list[0]):
-                    return fusion_script_list[0]
-            else:
-                if "兜底话术" in id_sequence_obj.keys():
-                    fusion_script_list = id_sequence_obj["兜底话术"]
-                    if isinstance(fusion_script_list, list):
-                        fallback_script = fusion_script_list[0]
-
-        except Exception as e:
-            my_log.error(f'切入话术读取错误：{str(e)}')
-
-        return fallback_script
+        return self._pick_statement(0)
 
     def __get_retain_statement(self):
-        if (self.product_id not in consts.cut_in_script_dict.keys()
-                or not isinstance(consts.cut_in_script_dict[self.product_id], dict)
-                or not consts.cut_in_script_dict[self.product_id]):
-            return ""
-
-        id_sequence_obj = consts.cut_in_script_dict[self.product_id]
-
-        fallback_script = ""
-
-        try:
-            for search_id, fusion_script_list in id_sequence_obj.items():
-                if (search_id != "兜底话术"
-                        and search_id in self.custom_label_info.keys()
-                        and (self.custom_label_info[search_id][1] == "是" or self.custom_label_info[search_id][
-                            1] == "1")
-                        and fusion_script_list[1]):
-                    return fusion_script_list[1]
-            else:
-                if "兜底话术" in id_sequence_obj.keys():
-                    fusion_script_list = id_sequence_obj["兜底话术"]
-                    if isinstance(fusion_script_list, list):
-                        fallback_script = fusion_script_list[1]
-
-        except Exception as e:
-            my_log.error(f'挽留话术读取错误：{str(e)}')
-
-        return fallback_script
+        return self._pick_statement(1)
 
     @staticmethod
     def __strong_text(text):
+        """只加粗小节标题。先转义外部文本里的尖括号，再插入标题标签，
+        避免维表话术里出现 < / > 时把结构撑坏。"""
         need_strong_text = ["【辅助画像】", "【切入话术】", "【卖点】", "【挽留话术】"]
-        for i in need_strong_text:
-            text = text.replace(i, f"<strong>{i}</strong>")
-
+        text = html_text(text)
+        for title in need_strong_text:
+            text = text.replace(title, f"<strong>{title}</strong>")
         return text
 
     def __get_output_script(self):

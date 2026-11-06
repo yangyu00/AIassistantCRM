@@ -83,3 +83,11 @@ class ImmutableYamlConfig(ReadOnlyDict):
             self.gc.setdefault('marketAssistant', {})['api_tokens'] = os.environ['CRM_API_TOKENS']
         self.gc = recursive_read_only(self.gc)
         super().__init__(self.gc, **kwargs)
+
+    def get(self, key, default=None):
+        """字典式访问带默认值，供 main.py 读可选配置项（如 dim_table.check_seconds）。"""
+        try:
+            value = self[key]
+        except Exception:
+            return default
+        return default if value is None else value

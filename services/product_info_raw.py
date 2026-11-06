@@ -1,4 +1,5 @@
-from src import consts
+from src import dim_table
+from src.security import html_text
 
 
 class ProductInfoRaw(object):
@@ -12,15 +13,18 @@ class ProductInfoRaw(object):
         self.output_script = "无"
 
     def __get_product_name(self):
-        if self.product_id not in consts.product_selling_point_match_dict:
-            return None
-        return consts.product_selling_point_match_dict[self.product_id][0]
+        """产品名称取自卖点维表；查不到返回 None，由接口层按 code=2 处理。"""
+        name, _, _ = dim_table.selling_point(self.product_id)
+        return name or None
 
     def __get_queried_label_ids(self):
-        if self.product_id not in consts.product_selling_point_match_dict:
+        """维表第 3 列是按换行分隔的标签ID清单，可能是 str 也可能是 list。"""
+        _, _, label_ids = dim_table.selling_point(self.product_id)
+        if not label_ids:
             return []
-
-        return consts.product_selling_point_match_dict[self.product_id][2].split("\n")
+        if isinstance(label_ids, (list, tuple, set)):
+            return [str(x).strip() for x in label_ids if str(x).strip()]
+        return [x.strip() for x in str(label_ids).split("\n") if x.strip()]
 
     def __get_queried_label_nvs(self):
         queried_label_nvs = []
@@ -43,8 +47,8 @@ class ProductInfoRaw(object):
             if not label_value:
                 continue
 
-            if self.queried_label_ids[i] in consts.label_name_mapping.keys():
-                label_name = consts.label_name_mapping[self.queried_label_ids[i]]
+            # 维表配了展示名就用维表的，否则沿用 IOP 返回的 ITEMNAME
+            label_name = dim_table.label_name(self.queried_label_ids[i], label_name)
 
             # 近期上网掉线、卡顿记录的特殊处理
             if self.queried_label_ids[i] == "a1e357f57b474d51119bf003443bd088" and str(label_value) == "0.00":
@@ -79,10 +83,12 @@ class ProductInfoRaw(object):
 
             # 降档阈值的特殊处理
             if self.queried_label_ids[i] in ("0e6f7d4a8b32aa551d09174481857c39", "efe5295c6763e2eab16afbaa984a9ee4"):
-                portrait_str += f'<strong><span style="color:red;">{label_name}</span></strong>: {label_value}; '
+                portrait_str += (f'<strong><span style="color:red;">{html_text(label_name)}</span></strong>'
+                             f': {html_text(label_value)}; ')
                 continue
 
-            portrait_str += f'{label_name}: <strong><span style="color:blue;">{label_value}</span></strong>; '
+            portrait_str += (f'{html_text(label_name)}: <strong><span style="color:blue;">'
+                             f'{html_text(label_value)}</span></strong>; ')
             exist_label_name_list.append(label_name)
 
         if portrait_str:

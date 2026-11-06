@@ -1,114 +1,103 @@
+# -*- coding: utf-8 -*-
+"""卖点维表 → consts 分片（product_selling_point_match_dict + cut_in_script_dict）
+
+维表列（见截图）：
+  业务ID | 产品名称 | 生成话术 | 标签ID | 兜底话术 | 匹配结果2 | 标签0 | 标签1 ...
+- 业务ID 为空的行直接跳过（原来是补成 line{i+2} 这种假 key，会污染维表）
+- 标签ID 列：单元格内按换行分隔多个标签ID，顺序即优先级（靠前优先）
+- 匹配结果2 列：按换行列出「命中分组」，与 标签0/标签1/... 按位置一一对应；
+  第 g 个分组用「标签{g}」列的话术，该列为空时写空串（与原行为一致）
+- 兜底话术 / 标签N 话术格式：
+      切入话术：xxx
+      拒绝挽留话术：yyy
+  只写了一段时另一段为空串，业务侧按长度取，不会 IndexError
+
+本脚本只写自己的分片文件，绝不碰 src/consts.py，也就不会覆盖标签转换维表。
+"""
+import re
 import sys
 from pathlib import Path
 
-project_path = str(Path(__file__).resolve().parent.parent)
-sys.path.append(project_path)
-
-import re
 import pandas as pd
-from yapf.yapflib.yapf_api import FormatFile
-from excel2consts.basic_ops import remove_old_node, add_new_dict_node, add_new_nested_dict_node
+from yapf.yapflib.yapf_api import FormatCode
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+from excel2consts import basic_ops as _ops  # noqa: E402
+
+CUT_IN_MARK = '切入话术'
+RETAIN_MARK = '拒绝挽留话术'
+
+
+def _clean(cell) -> str:
+    return str(cell).replace('**', '').strip() if cell is not None else ''
 
 
 def cut_in_str2tuple(fusion_scripts: str):
-    def remake_statement(extract_chunk):
-        statement_list = []
-        for one_cut_in_statement in extract_chunk.splitlines():
-            if not one_cut_in_statement:
-                continue
-            split_statement = one_cut_in_statement.strip().replace(':', '：').split("：")
-            if len(split_statement) == 1:
-                statement_list.append(split_statement[0])
-            else:
-                split_statement[0] = re.sub(r'^\d+\s?\.\s?', '', split_statement[0])
-                split_statement[0] = '<strong><span style="color: blue;">' + split_statement[
-                    0] + "：" + '</span></strong>'
-                statement_list.append(split_statement[0] + '：'.join(split_statement[1:]))
+    """把一格话术拆成 [切入话术, 挽留话术]；整体为空时返回 ''。"""
+    text = _clean(fusion_scripts)
+    if not text:
+        return ''
 
-        return '\n'.join(statement_list)
+    if not text.startswith(CUT_IN_MARK):  # 没写「切入话术」前缀时整格当切入话术
+        return [f'【切入话术】\n{_ops.format_script_block(text)}', '']
 
-    injection_scripts = []
-    pattern = re.compile(r'切入话术(.*?)拒绝挽留话术(.*)', re.DOTALL)
+    body = text[len(CUT_IN_MARK):].lstrip('：:')
+    cut_in, _, tail = body.partition(RETAIN_MARK)
+    cut_in, retain = _ops.format_script_block(cut_in), _ops.format_script_block(tail.lstrip('：:'))
 
-    extract = pattern.findall(fusion_scripts)
-    if extract and len(extract[0]) == 2:
-        cut_in_statement = remake_statement(extract[0][0].strip())
-        cut_in_statement = "【切入话术】\n" + cut_in_statement if cut_in_statement else ""
-        injection_scripts.append(cut_in_statement)
-        retention_statement = remake_statement(extract[0][1].strip())
-        retention_statement = "【挽留话术】\n" + retention_statement if retention_statement else ""
-        injection_scripts.append(retention_statement)
-    else:
-        injection_scripts.append('')
+    scripts = [f'【切入话术】\n{cut_in}' if cut_in else '',
+               f'【挽留话术】\n{retain}' if retain else '']
+    return scripts if (scripts[0] or scripts[1]) else ''
 
-    # 如果全部切入挽留话术都解析失败，则返回空字符串
-    for one_content in injection_scripts:
-        if one_content:
-            break
-    else:
-        injection_scripts = ""
 
-    return injection_scripts
+def split_ids(cell) -> list:
+    """标签ID / 匹配结果2 单元格 → 按换行拆出的清单（保持维表行序）。"""
+    text = _clean(cell)
+    if not text:
+        return []
+    return [x.strip() for x in re.split(r'[\n\r]+', text) if x.strip()]
 
 
 def rewrite_product_selling_point_match_dict(excel_path, file_path, *node_dict_names):
-    # 读取Excel文件
     df = pd.read_excel(excel_path, dtype=str, keep_default_na=False)
 
-    # 改写 product_selling_point_match_dict
-    keys = list(df["业务ID"])
-    product_names = list(df["产品名称"])
-    selling_points = list(df["生成话术"])  # 对应“卖点”输出
-    label_ids = list(df["标签ID"])  # 对应“客户画像”输出
+    match_dict: dict = {}
+    cut_in_dict: dict = {}
+    label_cols = {c for c in df.columns if re.fullmatch(r'标签\d+', str(c))}
 
-    keys = [keyword.strip() if keyword else f"line{i + 2}" for i, keyword in enumerate(keys)]
-    product_name = [product_name.strip() if product_name else "" for product_name in product_names]
-    values = [selling_point.strip() if selling_point else "" for i, selling_point in enumerate(selling_points)]
-    label_id = [label_id.strip() if label_id else "" for label_id in label_ids]
+    for _, row in df.iterrows():
+        key = _clean(row.get('业务ID'))
+        if not key:
+            continue
 
-    new_values = zip(product_name, values, label_id)
+        match_dict[key] = (_clean(row.get('产品名称')),
+                           _clean(row.get('生成话术')),
+                           '\n'.join(split_ids(row.get('标签ID'))))  # 换行分隔，与 ProductInfoRaw 兼容
 
-    my_dict = dict(zip(keys, new_values))
-    if '' in my_dict:
-        my_dict.pop('')
+        inner: dict = {}
+        fallback = cut_in_str2tuple(row.get('兜底话术'))
+        if fallback:
+            inner['兜底话术'] = fallback
 
-    # 删除旧的查找字典
-    remove_old_node(file_path, node_dict_names[0])
+        for g, one_id in enumerate(split_ids(row.get('匹配结果2'))):
+            col = f'标签{g}'
+            if col not in label_cols:
+                continue
+            scripts = cut_in_str2tuple(row.get(col))
+            inner[one_id] = scripts if scripts else ''
+        cut_in_dict[key] = inner
 
-    # 添加新的字典
-    add_new_dict_node(file_path, node_dict_names[0], my_dict)
-
-    # 改写 cut_in_script_dict
-    nested_dict = {}
-    for i, (index, row) in enumerate(df.iterrows()):
-        key_id = row["业务ID"]
-        script_combo = cut_in_str2tuple(row[f"兜底话术"].strip().replace("**", ""))
-        inner_dict = {"兜底话术": script_combo}
-        if "匹配结果2" in row.keys() and row["匹配结果2"].strip():
-            id_group_list = row["匹配结果2"].strip().split('\n')
-            for g, one_id in enumerate(id_group_list):
-                if f"标签{g}" in row.keys() and row[f"标签{g}"].strip():
-                    script_combo = cut_in_str2tuple(row[f"标签{g}"].strip().replace("**", ""))
-                    inner_dict[one_id] = script_combo
-                else:
-                    inner_dict[one_id] = ""
-
-            nested_dict[key_id] = inner_dict
-        else:
-            nested_dict[key_id] = {}
-
-    # 删除旧的查找字典
-    remove_old_node(file_path, node_dict_names[1])
-
-    # 添加新的字典
-    add_new_nested_dict_node(file_path, node_dict_names[1], nested_dict)
-
-    # 整理格式
-    FormatFile(str(file_path), in_place=True)
+    source = _ops.render_module({node_dict_names[0]: match_dict,
+                                 node_dict_names[1]: cut_in_dict})
+    file_path.write_text(FormatCode(source)[0], encoding='utf-8')
+    return len(match_dict), len(cut_in_dict)
 
 
 if __name__ == '__main__':
-    excel_path_ = Path(project_path) / 'excel2consts' / '卖点维表.xlsx'
-    file_path_ = Path(project_path) / 'src' / 'consts.py'
-    rewrite_product_selling_point_match_dict(excel_path_, file_path_,
-                                             "product_selling_point_match_dict", "cut_in_script_dict")
+    project_path = Path(__file__).resolve().parent.parent
+    excel_path_ = project_path / 'excel2consts' / '卖点维表.xlsx'
+    file_path_ = project_path / 'src' / f'{_ops.PART_PREFIX}selling_point.py'  # 只写分片，由 dim_table 合并
+    n, m = rewrite_product_selling_point_match_dict(excel_path_, file_path_,
+                                                    'product_selling_point_match_dict', 'cut_in_script_dict')
+    print(f'[卖点维表] 产品 {n} 条，切入话术 {m} 组 → {file_path_.name}')
