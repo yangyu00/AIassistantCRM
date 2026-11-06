@@ -1,4 +1,4 @@
-from config import ImmutableYamlConfig
+from config import config
 import requests
 import datetime
 
@@ -12,7 +12,7 @@ class Tokens:
 
 TOKENS = Tokens()
 
-global_config = ImmutableYamlConfig()
+global_config = config
 
 token_url = 'http://{host}:{port}/openapi/restOauth2Server/access_token'.format(
     host=global_config['IOP']['TOKEN']['host'], port=global_config['IOP']['TOKEN']['port'])

@@ -11,11 +11,11 @@ import time
 
 import aiohttp
 
-from config import ImmutableYamlConfig
+from config import config
 from src.log_util import my_log
 from src.security import mask_sensitive
 
-global_config = ImmutableYamlConfig()
+global_config = config
 
 TOKEN_URL = 'http://{host}:{port}/openapi/restOauth2Server/access_token'.format(
     host=global_config['IOP']['TOKEN']['host'], port=global_config['IOP']['TOKEN']['port'])
@@ -41,7 +41,7 @@ async def startup():
     if _session is None or _session.closed:
         connector = aiohttp.TCPConnector(limit=50, limit_per_host=20)
         _session = aiohttp.ClientSession(connector=connector)
-        _gate = asyncio.Semaphore(int(global_config['IOP'].get('max_concurrency', 20)))
+        _gate = asyncio.Semaphore(int(global_config['IOP']['max_concurrency']))
 
 
 async def shutdown():

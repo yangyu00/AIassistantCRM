@@ -35,11 +35,14 @@
 """
 import os
 
+from config import config
+
 # ============ 运行期根目录 ============
 # 所有业务的文件 / 库 / 日志统一放在这个目录下，按 业务ID 分子目录：
 #   <runtime_dir>/F09554/{files,sqlite_db,logs}/
 # 用环境变量 SFTP_RUNTIME_DIR 指定；不指定则用本文件所在目录的上一级 / runtime
-RUNTIME_DIR = os.environ.get('SFTP_RUNTIME_DIR') or os.path.join(
+# 来自 .env 的 SFTP_RUNTIME_DIR（系统环境变量优先）；未设置则用项目根下的 runtime/
+RUNTIME_DIR = config.get('runtime_dir') or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime')
 
 # ============ 号卡 / 套餐 / 宽带 共用表结构（三库同构，只改差异项） ============

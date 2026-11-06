@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field, field_validator
 
 from IOP.get_custinfo import get_custom_info_in_global
-from config import ImmutableYamlConfig
+from config import config
 from services.product_info_raw import ProductInfoRaw as ProductInfoRaw
 from services.rewrite_by_excel.rewrite import ProductInfoRewrite as ProductInfoByExcel
 from services.product_registry import resolve as resolve_product_spec
@@ -135,11 +135,11 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 register_errors_handlers(app)
-global_config = ImmutableYamlConfig()
+global_config = config
 
 MAIN_PATH = dim_table.MAIN_PATH
-DIM_TABLE_CHECK_SECONDS = int(global_config.get('dim_table', {}).get('check_seconds', 300))
-SFTP_STOP_TIMEOUT = int(global_config.get('sftp', {}).get('stop_timeout', 30))
+DIM_TABLE_CHECK_SECONDS = int(global_config['dim_table']['check_seconds'])
+SFTP_STOP_TIMEOUT = int(global_config['sftp_stop_timeout'])
 
 
 class ProductIds(BaseModel):
@@ -238,4 +238,4 @@ async def dim_table_reload():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app="main:app", **global_config['fastapi'])
+    uvicorn.run(app="main:app", **global_config['fastapi'].as_dict())

@@ -1,4 +1,4 @@
-from config import ImmutableYamlConfig
+from config import config
 from src.log_util import my_log
 from IOP.get_token import TOKENS, token2global
 import aiohttp
@@ -6,7 +6,6 @@ import datetime
 
 
 async def get_custom_info_in_global(tel):
-    global_config = ImmutableYamlConfig()
     if TOKENS.access_token is None or datetime.datetime.now() > TOKENS.deadline:
         await token2global()
         for _ in range(3):
@@ -21,16 +20,16 @@ async def get_custom_info_in_global(tel):
 
     url = ("http://{host}:{port}/openapi/httpService/UserService"
            "?access_token={access_token}&method=qryCustInfoByChannel&format=json").format(
-        host=global_config['IOP']['CustInfo']['host'],
-        port=global_config['IOP']['CustInfo']['port'],
+        host=config['IOP']['CustInfo']['host'],
+        port=config['IOP']['CustInfo']['port'],
         access_token=TOKENS.access_token)
 
     headers = {'Content-Type': 'application/json; charset=gbk', 'Accept-Encoding': 'gzip, deflate'}
 
     post_data = {
-        "VERSION": f"{global_config['IOP']['CustInfo']['version']}",
+        "VERSION": f"{config['IOP']['CustInfo']['version']}",
         "TELNUM": tel,
-        "TYPE": f"{global_config['IOP']['CustInfo']['type']}",
+        "TYPE": f"{config['IOP']['CustInfo']['type']}",
     }
 
     async with aiohttp.ClientSession() as client:

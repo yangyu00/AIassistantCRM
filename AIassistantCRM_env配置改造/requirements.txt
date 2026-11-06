@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+aiohttp
+python-dotenv   # 读取 .env（可选，未安装时只读系统环境变量）
+paramiko
+openpyxl
+loguru
+pydantic

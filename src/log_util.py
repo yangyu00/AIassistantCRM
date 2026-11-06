@@ -1,10 +1,10 @@
 from loguru import logger
 from pathlib import Path
 import time
-from config import ImmutableYamlConfig
+from config import config
 from src.security import mask_sensitive
 
-global_config = ImmutableYamlConfig()
+global_config = config
 if global_config.get('log_dir'):
     log_dir_path = Path(global_config['log_dir'])
 else:

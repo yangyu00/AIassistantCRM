@@ -1,4 +1,6 @@
 import os
+
+from config import config
 # -*- coding: utf-8 -*-
 """
 共用配置：两个业务的差异项都收敛到这里。
@@ -17,11 +19,11 @@ import os
 # ================= 通用默认配置（两业务一致） =================
 DEFAULT_CONFIG = {
     # --- SFTP 连接（两台脚本连的是同一台服务器、同一个远程目录）---
-    'SFTP_HOST': '134.80.199.252',
-    'SFTP_PORT': 22,
-    'SFTP_USERNAME': 'wangsi',
+    'SFTP_HOST': config['sftp']['host'],
+    'SFTP_PORT': config['sftp']['port'],
+    'SFTP_USERNAME': config['sftp']['username'],
     # 密码不入库，统一由环境变量 SFTP_PASSWORD 注入（见 sftp_jobs/service.py）
-    'SFTP_PASSWORD': os.environ.get('SFTP_PASSWORD', ''),
+    'SFTP_PASSWORD': config['sftp']['password'],  # 来自 .env 的 SFTP_PASSWORD（系统环境变量优先）
     'SFTP_REMOTE_PATH': "/ftpdata2/data_reverse/wangsi/aifile",
     # 远程文件名模板：前缀 + 日期 + 000000.AVL
     'REMOTE_FILE_TEMPLATE': "{prefix}{date}000000.AVL",

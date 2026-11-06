@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import requests
-from config import ImmutableYamlConfig
+from config import config
 from src.log_util import my_log
 import datetime
 
@@ -16,14 +16,13 @@ TOKENS = Tokens()
 
 
 async def token2global():
-    global_config = ImmutableYamlConfig()
 
     token_url = 'http://{host}:{port}/openapi/restOauth2Server/access_token'.format(
-        host=global_config['IOP']['TOKEN']['host'], port=global_config['IOP']['TOKEN']['port'])
+        host=config['IOP']['TOKEN']['host'], port=config['IOP']['TOKEN']['port'])
 
     response = requests.post(token_url, data=f"grant_type=client_credentials"
-                                             f"&client_id={global_config['IOP']['TOKEN']['id']}"
-                                             f"&client_secret={global_config['IOP']['TOKEN']['secret']}")
+                                             f"&client_id={config['IOP']['TOKEN']['id']}"
+                                             f"&client_secret={config['IOP']['TOKEN']['secret']}")
     res_data = response.json()
 
     if 'access_token' in res_data:
