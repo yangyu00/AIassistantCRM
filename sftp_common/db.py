@@ -270,7 +270,11 @@ def cleanup_expired_data(cfg: dict, table_name_list: Sequence[str]):
     if not os.path.exists(db_path):
         return
     time_column = cfg['EXPIRE_TIME_COLUMN']
-    expire_value = (datetime.now() - timedelta(days=int(cfg['DATA_EXPIRE_DAYS']))).strftime('%Y-%m-%d')
+    # [FIX] 原来直接拿日期字符串和 op_time 比较：op_time 只写了日期（没有时分秒）
+    # 的当天记录会满足 '当天' < '当天' 之外的边界而被误删。改成「严格早于
+    # (今天-N天) 这一天」才删，即阈值取次日 00:00:00，当天数据一律保留。
+    expire_day = (datetime.now() - timedelta(days=int(cfg['DATA_EXPIRE_DAYS']))).strftime('%Y-%m-%d')
+    expire_value = expire_day + ' 00:00:00'
     total_deleted = 0
     failed_tables = 0
     try:
@@ -294,7 +298,7 @@ def cleanup_expired_data(cfg: dict, table_name_list: Sequence[str]):
         log.error(f"清理过期数据失败: {e}", exc=e)
         return
     log.info(f"数据库过期数据清理完成：共删除 {total_deleted} 条"
-             f"（{time_column} < {expire_value}），失败表 {failed_tables} 个")
+             f"（{time_column} < {expire_value}，保留 {expire_day} 及以后），失败表 {failed_tables} 个")
 
 
 def cleanup_local_expired_files(cfg: dict):

@@ -155,7 +155,10 @@ class Config(_ConfigBase):
     IOP: IOPConfig = IOPConfig()
     sftp: SFTPConfig = SFTPConfig()
     dim_table: DimTableConfig = DimTableConfig()
-    sftp_stop_timeout: int = _int("SFTP_STOP_TIMEOUT", 30)
+    # 默认 30→180：单次 SFTP 下载最长可达数分钟（重试 3 次 × 读超时 120s），
+    # 30s 根本等不完，daemon 线程会被随进程退出直接截断，可能把下了一半的文件当成完整文件入库。
+    # 可用环境变量 SFTP_STOP_TIMEOUT 覆盖。
+    sftp_stop_timeout: int = _int("SFTP_STOP_TIMEOUT", 180)
 
     def as_dict(self, mask=True):
         data = asdict(self)

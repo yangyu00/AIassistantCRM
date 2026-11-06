@@ -34,7 +34,8 @@ def rewrite_label_name_mapping(excel_path, node_dict_name, file_path):
     my_dict = {k: v for k, v in zip(keys, values) if k}
 
     source = _ops.render_module({node_dict_name: my_dict})
-    file_path.write_text(FormatCode(source)[0], encoding='utf-8')
+    # [FIX] 原子写分片，避免半成品文件被下次启动的 merge 读到
+    _ops.write_part_atomic(file_path, FormatCode(source)[0])
     return len(my_dict)
 
 

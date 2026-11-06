@@ -7,7 +7,10 @@
 现在每个脚本只把自己要的 dict 渲染成独立分片文件，合并交给 dim_table。
 """
 import ast
+import os
 import re
+import tempfile
+from pathlib import Path
 
 PART_PREFIX = 'consts_part_'
 
@@ -39,20 +42,57 @@ def _literal(value):
     raise TypeError(f'维表值不支持的类型: {type(value).__name__}')
 
 
+def write_part_atomic(file_path, source: str) -> None:
+    """[FIX] 原子写分片：先写同目录临时文件并 flush+fsync，再 os.replace 覆盖。
+    原来直接 write_text，写到一半进程被杀/掉电会留下半个分片，
+    下次启动 merge_part_files 可能读到损坏内容或混入旧数据。
+    """
+    file_path = Path(file_path)
+    fd, tmp = tempfile.mkstemp(prefix=file_path.name + '.', suffix='.tmp', dir=str(file_path.parent))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(source)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, file_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def format_script_block(text: str) -> str:
-    """话术里每段「小标题：内容」的小标题加粗标蓝，与原逻辑一致；无冒号的整段返回。"""
+    """话术里每段「小标题：内容」的小标题加粗标蓝，与原逻辑一致；无冒号的整段返回。
+
+    [FIX] tail（小标题后的内容）原来原样拼进 HTML，维表里出现 < > & 时会
+    撑坏页面结构，这里做转义；head 来自正则清洗后的标题，同样转义。
+    """
     out_lines = []
     for line in str(text or '').splitlines():
         line = line.strip()
         if not line:
             continue
         head, _, tail = line.replace(':', '：').partition('：')
+        head = escape(head)
+        tail = escape(tail)
         head = re.sub(r'^\d+\s?[.、]\s?', '', head).strip()
         if not head:
             out_lines.append(tail)
             continue
         out_lines.append(f'<strong><span style="color: blue;">{head}：</span></strong>{tail}')
     return '\n'.join(out_lines)
+
+
+def escape(text) -> str:
+    """[FIX] HTML 转义，与 src.security.html_text 保持一致的行为"""
+    return (str(text or '')
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('"', '&quot;')
+            .replace("'", '&#39;'))
 
 
 def keep_chinese_and_alphanumeric(text):

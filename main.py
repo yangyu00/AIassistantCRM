@@ -7,11 +7,12 @@ import uvicorn
 from fastapi import FastAPI
 from pydantic import BaseModel, Field, field_validator
 
-from IOP.get_custinfo import get_custom_info_in_global
+from IOP.iop_client import get_custom_info
 from config import config
 from services.product_info_raw import ProductInfoRaw as ProductInfoRaw
 from services.rewrite_by_excel.rewrite import ProductInfoRewrite as ProductInfoByExcel
 from services.product_registry import resolve as resolve_product_spec
+from services.product_registry import is_registered as is_product_registered
 
 from sftp_jobs import start_all
 from sftp_jobs.queries import get_latest_record
@@ -121,8 +122,16 @@ async def lifespan(application: FastAPI):
             await refresh_task
         except asyncio.CancelledError:
             pass
+    # 只清理超过 1 小时的残留分片（正常一次编译+合并是秒级的，1 小时前的遗留才算异常退出残留）。
+    import time as _time
+    _stale_before = _time.time() - 3600
     for f in dim_table.MAIN_PATH.joinpath('src').glob(dim_table.PART_PREFIX + '*.py'):
-        f.unlink(missing_ok=True)  # 清理异常退出残留的分片，避免下次启动混入旧数据
+        try:
+            if f.stat().st_mtime < _stale_before:
+                f.unlink()
+                my_log.info(f'已清理残留维表分片: {f.name}')
+        except OSError:
+            pass
     for t in sftp_threads:
         if t.is_alive():
             my_log.info(f'等待 SFTP 子进程结束: {t.name}')
@@ -177,7 +186,7 @@ class Args(BaseModel):
 async def marketAssistant(args: Args):
     # 1. 根据 手机号 获取 用户标签
     try:
-        custom_label_info = await get_custom_info_in_global(args.telnum)
+        custom_label_info = await get_custom_info(args.telnum)
     except Exception as e:
         my_log.error(e)
         custom_label_info = {}
@@ -185,14 +194,20 @@ async def marketAssistant(args: Args):
     # 2. 建立产品对象列表
     product_obj_list = []
     for one_product_obj in args.productId:
+        # 解析优先级（维表是最后一道兜底）：
+        #   1) 明确注册的产品     → 走注册表里的具名 job
+        #   2) 未注册但有兜底 job → 先查兜底库，**查到记录才用**，查不到继续往下
+        #   3) 卖点维表里有该产品 → 走维表话术（ProductInfoByExcel）
+        #   4) 都没有             → ProductInfoRaw（product_name 为 None → code=2/3）
         job_id, spec_cls = resolve_product_spec(one_product_obj.id)
         if job_id is not None:
-            # 业务库中的产品：号卡/套餐/宽带/控损/客户诊断，库路由见 services/product_registry.py
             record = await get_latest_record(job_id, args.telnum, one_product_obj.id)
-            product_obj_list.append(spec_cls(one_product_obj.id, custom_label_info, record))
-            continue
+            if is_product_registered(one_product_obj.id) or record:
+                product_obj_list.append(spec_cls(one_product_obj.id, custom_label_info, record))
+                continue
+            my_log.info(f'产品 {one_product_obj.id} 在兜底业务 {job_id} 中无记录，改走卖点维表')
 
-        # 未进入任何业务库（resolve 返回 None）→ 查卖点维表（走 dim_table 快照，热更新后即时生效）
+        # 未进入任何业务库（或兜底库无记录）→ 查卖点维表（dim_table 快照，热更新即时生效）
         if dim_table.has_selling_point(one_product_obj.id):
             product_obj_list.append(ProductInfoByExcel(one_product_obj.id, custom_label_info))
             continue
@@ -208,10 +223,15 @@ async def marketAssistant(args: Args):
                 {"productId": product_obj.product_id, "productName": product_obj.product_name,
                  "script": product_obj.output_script, "code": "0"})
         else:
-            my_log.error("无产品名称")
+            # 细分：
+            #   code=2 维表里有该产品，但产品名为空
+            #   code=3 任何业务库和维表中都不存在该产品ID（疑似ID错误/未配置）
+            unknown = not dim_table.has_selling_point(product_obj.product_id)
+            my_log.error(f'{"产品ID未配置: " if unknown else "无产品名称: "}{product_obj.product_id}')
             my_log.error(product_obj)
             allScripts.append(
-                {"productId": product_obj.product_id, "productName": "", "script": "", "code": "2"})
+                {"productId": product_obj.product_id, "productName": "", "script": "",
+                 "code": "3" if unknown else "2"})
 
     result = {"allScripts": allScripts}
     return {"res_code": 0, "res_desc": "", "result": result}

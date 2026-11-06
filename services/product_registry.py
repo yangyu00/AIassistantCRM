@@ -21,7 +21,7 @@ SPECIAL_PRODUCTS = {
 }
 
 # 兜底 job_id
-# 注意：当前配置中 F09609 的 ids 为空集合，因此它会匹配所有未显式注册的产品ID
+# 注意：当前配置中 F09609 的 ids 为空集合，因此 resolve 对未注册产品也会返回它
 FALLBACK_JOB = 'F09609'
 
 # 产品ID → (job_id, 话术类) 的映射表
@@ -34,28 +34,29 @@ PRODUCT_SPECS = {
 
 
 def resolve(product_id: str):
+    """根据产品ID解析 (job_id, 话术类)，未匹配返回 (None, None)。
+
+    [FIX] 匹配顺序：
+        1) 精确注册的产品ID      → 对应的具名 job
+        2) 未注册 + 有兜底 job   → (FALLBACK_JOB, cls)
+        3) 未注册 + 无兜底 job   → (None, None)
+    兜底 job 只是第一顺位尝试；它**查不到记录**时 main.py 会继续落到
+    卖点维表，维表是最后一道兜底。
     """
-    根据产品ID解析对应的 (job_id, 话术类)
-
-    ⚠️ 重要说明：
-    在当前配置下，由于 FALLBACK_JOB='F09609' 且它的 ids 为空集合，
-    本函数 **永远不会返回 (None, None)**。
-
-    实际行为：
-    - 命中 PRODUCT_SPECS：返回精确匹配的 (job_id, cls)
-    - 未命中：直接返回兜底 job (FALLBACK_JOB, 兜底 cls)
-
-    因此下面的 `return None, None` 是 **防御性代码 / 不可达分支**，
-    仅用于未来配置调整或逻辑变更时兜底，不代表当前有“未匹配”语义。
-    """
-
     hit = PRODUCT_SPECS.get(product_id)
     if hit is not None:
         return hit
 
-    ids = SPECIAL_PRODUCTS.get(FALLBACK_JOB, {}).get('ids', set())
-
-    if not ids:
-        return FALLBACK_JOB, SPECIAL_PRODUCTS[FALLBACK_JOB]['cls']
+    fallback = SPECIAL_PRODUCTS.get(FALLBACK_JOB)
+    if fallback is not None and not fallback.get('ids'):
+        return FALLBACK_JOB, fallback['cls']
 
     return None, None
+
+
+def is_registered(product_id: str) -> bool:
+    """[FIX] 产品ID是否「明确登记」在 SPECIAL_PRODUCTS 中
+    （包括被兜底 job 点名登记的），区别于「被空 ids 兜底 job 无条件接住」。"""
+    if product_id in PRODUCT_SPECS:
+        return True
+    return any(product_id in (v.get('ids') or ()) for v in SPECIAL_PRODUCTS.values())

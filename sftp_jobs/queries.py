@@ -6,12 +6,26 @@ import zlib
 
 from .config import JOBS, job_of_product
 from .runtime_paths import db_path, db_file_of
+from sftp_common.sftp_log import log
 
 _local = threading.local()
+_col_cache: dict = {}
 
-def _columns_of(conn, t_name: str):
-    rows = conn.execute(f"PRAGMA table_info({t_name})").fetchall()
-    return [r[1] for r in rows]
+
+def _mask(v) -> str:
+    """[FIX] 日志脱敏：手机号只保留后 4 位，避免手机号随异常信息落进日志"""
+    s = str(v or '')
+    return s[-4:].rjust(len(s), '*') if len(s) >= 7 else '***'
+
+
+def _columns_of(conn, t_name: str, cache_key: str = ''):
+    key = (cache_key, t_name)
+    cols = _col_cache.get(key)
+    if cols is None:
+        rows = conn.execute(f"PRAGMA table_info({t_name})").fetchall()
+        cols = [r[1] for r in rows]
+        _col_cache[key] = cols
+    return cols
 
 
 def _conn(job_id: str, path: str, timeout_ms: int) -> sqlite3.Connection:
@@ -45,7 +59,7 @@ async def get_latest_record(job_id: str, telnum, product_id=None) -> dict:
     col = cfg.get('product_id_column')
     try:
         conn = _conn(job_id, path, timeout_ms)
-        cols = _columns_of(conn, t_name)
+        cols = _columns_of(conn, t_name, f'{job_id}:{path}')
         if not cols:                                   # 表还没建（当天文件未到）
             return {}
         sql = f"SELECT * FROM {t_name} WHERE product_no = ?"
@@ -57,8 +71,10 @@ async def get_latest_record(job_id: str, telnum, product_id=None) -> dict:
         row = conn.execute(sql, tuple(args)).fetchone()
         return dict(zip(cols, row)) if row else {}
     except Exception as e:
-        # 注意：e 里可能带手机号，调用方记录日志时请走脱敏
-        print(f"ERROR:: 查询 {job_id} 失败: {type(e).__name__}", flush=True)
+        # [FIX] 原来用 print，关掉控制台输出就完全看不见这条链路的报错；
+        # 且异常文本可能带手机号，这里只记类型+脱敏后的号尾
+        log.error(f"查询业务库失败: job={job_id}, productId={product_id}, "
+                  f"tel=*******{_mask(telnum)[-4:]}, err={type(e).__name__}: {e}", exc=e)
         return {}
 
 

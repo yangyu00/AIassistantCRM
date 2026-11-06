@@ -90,7 +90,8 @@ def rewrite_product_selling_point_match_dict(excel_path, file_path, *node_dict_n
 
     source = _ops.render_module({node_dict_names[0]: match_dict,
                                  node_dict_names[1]: cut_in_dict})
-    file_path.write_text(FormatCode(source)[0], encoding='utf-8')
+    # [FIX] 原子写分片，避免半成品文件被下次启动的 merge 读到
+    _ops.write_part_atomic(file_path, FormatCode(source)[0])
     return len(match_dict), len(cut_in_dict)
 
 

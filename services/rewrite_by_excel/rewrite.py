@@ -5,6 +5,7 @@ from src import dim_table
 from src.security import html_text
 
 from src.log_util import my_log
+from services.label_hit import is_hit
 
 def _tag_priority(product_id, search_id):
     """标签在该产品「标签ID」列里的行号 = 维表优先级，越靠前越优先。
@@ -98,7 +99,9 @@ class ProductInfoRewrite(ProductInfoRaw):
                 if search_id == "兜底话术" or not isinstance(scripts, (list, tuple)):
                     continue
                 label = self.custom_label_info.get(search_id)
-                if label is None or str(label[1]).strip() not in ("是", "1"):
+                # [FIX] 原写死只认 "是/1"，标签值为 有/Y/YES 等时静默走兜底话术
+                if label is None or not is_hit(label[1] if isinstance(label, (list, tuple)) and len(label) > 1 else label,
+                                               self.product_id, search_id):
                     continue
                 if len(scripts) > index and scripts[index]:
                     return str(scripts[index])

@@ -94,7 +94,10 @@ F09591_CONFIG = {
     'expire_days': (50, 50),
     'parser': 'line',
     'router': 'crc32',
-    'min_columns': 4,
+    # [FIX] 原为 4：schema 有 5 列，4 列的残缺行会被当正常数据入库，
+    # city_id 顶到 strategy_name 的位置、续行内容拼进 city_id，策略内容丢失。
+    # 改成 5 后列数不足的行会被判为异常行（宽表/续行场景由 service 显式覆盖）
+    'min_columns': 5,
     'tail_absorb': True,
     'required_columns': ('op_time', 'product_no'),
     'continuation_col': 'strategy_name',
